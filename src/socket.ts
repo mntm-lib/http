@@ -1,4 +1,4 @@
-import type { HttpRequest, HttpResponse } from 'uws';
+import type { HttpResponse } from 'uws';
 import type { Server } from 'http';
 import type { AddressInfo, Socket } from 'net';
 
@@ -6,7 +6,7 @@ import { clearTimeout, setTimeout } from 'timers';
 
 import { lazy } from './utils';
 
-export const socket = (server: Server, req: HttpRequest, res: HttpResponse): Socket => {
+export const socket = (server: Server, res: HttpResponse): Socket => {
   const localAddress = server.address() as AddressInfo;
 
   const lazyAddress = lazy(() => {
@@ -43,7 +43,7 @@ export const socket = (server: Server, req: HttpRequest, res: HttpResponse): Soc
       const timer = setTimeout(() => {
         res.close();
 
-        if (cb) {
+        if (typeof cb === 'function') {
           cb();
         }
       }, timeout);

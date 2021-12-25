@@ -1,16 +1,17 @@
 import type { IncomingMessage, OutgoingHttpHeader, OutgoingHttpHeaders, ServerResponse } from 'http';
 import type { Socket } from 'net';
-import type { HttpRequest, HttpResponse } from 'uws';
+import type { HttpResponse } from 'uws';
 
 import { Writable } from 'stream';
 import { Buffer } from 'buffer';
 import { STATUS_CODES } from 'http';
 
-import { notImplemented } from './utils.js';
+import { UNDEFINED, notImplemented } from './utils.js';
 
 const CHUNKED = 16384; // 16kB
+const SET_COOKIE = 'set-cookie';
 
-export const response = (socket: () => Socket, request: IncomingMessage, req: HttpRequest, res: HttpResponse): ServerResponse => {
+export const response = (socket: () => Socket, request: IncomingMessage, res: HttpResponse): ServerResponse => {
   let length = 0;
   let hasBody = true;
   const body: Buffer[] = [];
@@ -78,21 +79,40 @@ export const response = (socket: () => Socket, request: IncomingMessage, req: Ht
   });
 
   instance = writable as ServerResponse;
-  instance = Object.assign(instance, {
-    statusCode: 404,
-    statusMessage: 'Not found',
 
-    chunkedEncoding: false,
-    shouldKeepAlive: false,
-    useChunkedEncodingByDefault: false,
-    sendDate: false,
+  // Use array syntax only for cookies
+  let cookies: string[] = [];
+  const headers: Record<string, string> = {};
 
-    headersSent: false,
+  const setHeader = (
+    name: string,
+    value: number | string | readonly string[]
+  ) => {
+    if (instance.headersSent) {
+      throw new Error('Cannot set headers after they are sent to the client');
+    }
 
-    req: request
-  });
+    name = String(name).toLowerCase();
 
-  const headers: Record<number, Record<string, string>> = {};
+    if (typeof value === 'object' && Array.isArray(value)) {
+      // Fast-path for set headers
+      if (value.length === 0) {
+        return instance;
+      }
+
+      if (name === SET_COOKIE) {
+        cookies.push.apply(cookies, value.map(String));
+      } else {
+        headers[name] = String(value[value.length - 1]);
+      }
+    } else if (name === SET_COOKIE) {
+      cookies.push(String(value));
+    } else {
+      headers[name] = String(value);
+    }
+
+    return instance;
+  };
 
   const writeHead = (
     w_arg1: number,
@@ -135,83 +155,20 @@ export const response = (socket: () => Socket, request: IncomingMessage, req: Ht
     }
 
     if (rawHeaders !== null) {
-      const storedHeaders: Record<string, string> = {};
-
-      let name = '';
-      let value = '';
-
       if (Array.isArray(rawHeaders)) {
         if ((rawHeaders.length & 1) !== 0) {
           throw new TypeError(`The argument 'headers' is invalid. Received ${typeof rawHeaders}`);
         }
 
-        for (let iter = 0, key = null; iter < rawHeaders.length; iter += 2) {
-          key = rawHeaders[iter + 0];
-          if (key) {
-            name = String(key).toLowerCase();
-            value = String(rawHeaders[iter + 1]);
-
-            storedHeaders[name] = value;
-          }
+        for (let iter = 0; iter < rawHeaders.length; iter += 2) {
+          setHeader(String(rawHeaders[iter]), rawHeaders[iter + 1]);
         }
       } else {
-        const record = Object.assign({}, rawHeaders);
-
-        for (const key in record) {
-          if (key) {
-            name = String(key).toLowerCase();
-            value = String(record[name]);
-
-            storedHeaders[name] = value;
-          }
+        for (const name in rawHeaders) {
+          setHeader(String(name), rawHeaders[name]!);
         }
       }
-
-      if (instance.statusCode in headers) {
-        Object.assign(headers[instance.statusCode], storedHeaders);
-      } else {
-        headers[instance.statusCode] = storedHeaders;
-      }
     }
-  };
-
-  const setHeader = (
-    name: string,
-    value: number | string | readonly string[]
-  ) => {
-    if (instance.headersSent) {
-      throw new Error('Cannot set headers after they are sent to the client');
-    }
-
-    name = String(name);
-
-    if (typeof value === 'object' && Array.isArray(value)) {
-      for (let part of value) {
-        part = String(part).toLowerCase();
-
-        headers[instance.statusCode][name] = part;
-      }
-    } else {
-      headers[instance.statusCode][name] = String(value).toLowerCase();
-    }
-
-    return instance;
-  };
-
-  const getHeader = (
-    name: string
-  ) => {
-    name = String(name).toLowerCase();
-
-    return headers[instance.statusCode][name];
-  };
-
-  const getHeaders = () => {
-    return headers[instance.statusCode];
-  };
-
-  const getHeaderNames = () => {
-    return Object.keys(headers[instance.statusCode]);
   };
 
   const hasHeader = (
@@ -219,7 +176,51 @@ export const response = (socket: () => Socket, request: IncomingMessage, req: Ht
   ) => {
     name = String(name).toLowerCase();
 
-    return name in headers[instance.statusCode];
+    if (name === SET_COOKIE) {
+      return cookies.length > 0;
+    }
+
+    return name in headers;
+  };
+
+  const getHeader = (
+    name: string
+  ) => {
+    name = String(name).toLowerCase();
+
+    if (name === SET_COOKIE) {
+      if (cookies.length > 0) {
+        return cookies;
+      }
+
+      return UNDEFINED;
+    }
+
+    if (name in headers) {
+      return headers[name];
+    }
+
+    return UNDEFINED;
+  };
+
+  const getHeaders = () => {
+    const record: Record<string, string | string[]> = Object.assign({}, headers);
+
+    if (cookies.length > 0) {
+      record[SET_COOKIE] = cookies;
+    }
+
+    return record;
+  };
+
+  const getHeaderNames = () => {
+    const keys = Object.keys(headers);
+
+    if (cookies.length > 0) {
+      keys.push(SET_COOKIE);
+    }
+
+    return keys;
   };
 
   const removeHeader = (
@@ -231,29 +232,30 @@ export const response = (socket: () => Socket, request: IncomingMessage, req: Ht
 
     name = String(name).toLowerCase();
 
-    delete headers[instance.statusCode][name];
+    if (name === SET_COOKIE) {
+      cookies = [];
+    } else if (name in headers) {
+      delete headers[name];
+    }
   };
 
   const flushHeaders = () => {
     // @ts-expect-error false-positive
     instance.headersSent = true;
 
-    const flush = headers[instance.statusCode];
-    let value = '';
+    for (const name in headers) {
+      res.writeHeader(name, headers[name]);
+    }
 
-    if (flush) {
-      for (const name in flush) {
-        value = flush[name];
-
-        res.writeHeader(name, value);
-      }
+    for (const cookie of cookies) {
+      res.writeHeader(SET_COOKIE, cookie);
     }
   };
 
   const writeContinue = (cb?: () => void) => {
     res.writeStatus('100 Continue');
 
-    if (cb) {
+    if (typeof cb === 'function') {
       cb();
     }
   };
@@ -268,6 +270,18 @@ export const response = (socket: () => Socket, request: IncomingMessage, req: Ht
   });
 
   instance = Object.assign(instance, {
+    statusCode: 404,
+    statusMessage: 'Not found',
+
+    chunkedEncoding: false,
+    shouldKeepAlive: false,
+    useChunkedEncodingByDefault: false,
+    sendDate: false,
+
+    headersSent: false,
+
+    req: request,
+
     socket,
     connection: socket,
 

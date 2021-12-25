@@ -4,7 +4,7 @@ import type { Socket } from 'net';
 
 import { Readable } from 'stream';
 
-import { UNDEFINED, lazy } from './utils.js';
+import { UNDEFINED, lazy, notImplemented } from './utils.js';
 
 export const request = (socket: () => Socket, req: HttpRequest, res: HttpResponse): IncomingMessage => {
   let instance: IncomingMessage;
@@ -24,7 +24,13 @@ export const request = (socket: () => Socket, req: HttpRequest, res: HttpRespons
     statusMessage: UNDEFINED,
 
     trailers: {},
-    rawTrailers: []
+    rawTrailers: [],
+
+    // Should not be lazy as it is usually rewritten
+    url: req.getUrl(),
+
+    socket,
+    connection: socket
   });
 
   const getHeaders = lazy(() => {
@@ -44,37 +50,32 @@ export const request = (socket: () => Socket, req: HttpRequest, res: HttpRespons
     } as const;
   });
 
-  Object.defineProperty(instance, 'url', {
-    enumerable: true,
-    get: lazy(() => req.getUrl())
-  });
-
   Object.defineProperty(instance, 'method', {
     enumerable: true,
-    get: lazy(() => req.getMethod().toUpperCase())
+    get: lazy(() => req.getMethod().toUpperCase()),
+    set: notImplemented('request#method')
   });
 
   Object.defineProperty(instance, 'headers', {
     enumerable: true,
-    get: () => getHeaders().headers
+    get: () => getHeaders().headers,
+    set: notImplemented('request#headers')
   });
 
   Object.defineProperty(instance, 'rawHeaders', {
     enumerable: true,
-    get: () => getHeaders().rawHeaders
+    get: () => getHeaders().rawHeaders,
+    set: notImplemented('request#rawHeaders')
   });
 
   Object.defineProperty(instance, 'setTimeout', {
     enumerable: true,
-    get: () => socket().setTimeout
-  });
-
-  instance = Object.assign(instance, {
-    socket,
-    connection: socket
+    get: () => socket().setTimeout,
+    set: notImplemented('request#setTimeout')
   });
 
   res.onAborted(() => {
+    instance.destroy();
     instance.aborted = true;
   });
 

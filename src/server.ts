@@ -106,7 +106,7 @@ export const createServer = (
     }
 
     if (typeof l_arg2 === 'string') {
-      listenOptions.host = String(l_arg2);
+      listenOptions.host = l_arg2;
     }
 
     if (typeof l_arg2 === 'number') {
@@ -143,9 +143,9 @@ export const createServer = (
     };
 
     internal.any('/*', (res, req) => {
-      const createSocket = lazy(() => socket(server, req, res));
+      const createSocket = lazy(() => socket(server, res));
       const createRequest = request(createSocket, req, res);
-      const createResponse = response(createSocket, createRequest, req, res);
+      const createResponse = response(createSocket, createRequest, res);
 
       emitter.emit('request', createRequest, createResponse);
     });
@@ -169,10 +169,8 @@ export const createServer = (
     return server;
   };
 
-  Object.defineProperty(server, 'listen', {
-    enumerable: true,
-    value: listen
-  });
+  // TODO: inline?
+  server.listen = listen;
 
   Object.defineProperty(server, 'maxHeadersCount', {
     enumerable: true,

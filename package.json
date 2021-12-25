@@ -1,0 +1,51 @@
+{
+  "name": "@mntm/http",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./lib/index.cjs",
+  "module": "./lib/index.mjs",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/index.mjs",
+      "require": "./lib/index.cjs",
+      "types": "./lib/index.d.ts"
+    }
+  },
+  "author": {
+    "name": "Anton Petrov",
+    "email": "im@petrov.engineer",
+    "url": "https://petrov.engineer"
+  },
+  "description": "Speed up any node.js server",
+  "license": "MIT",
+  "keywords": [
+    "server",
+    "http",
+    "uws",
+    "uwebsockets"
+  ],
+  "homepage": "https://github.com/mntm-lib/http",
+  "bugs": "https://github.com/mntm-lib/http/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mntm-lib/http.git"
+  },
+  "scripts": {
+    "build:clear": "shx rm -rf lib",
+    "build:types": "tsc",
+    "build:bundle": "node bin/esbuild.js",
+    "build": "yarn run build:clear && yarn run build:types && yarn run build:bundle"
+  },
+  "dependencies": {
+    "@types/node": "^17.0.4",
+    "uws": "github:uNetworking/uWebSockets.js#v20.6.0"
+  },
+  "devDependencies": {
+    "@mntm/eslint-config": "^1.0.0",
+    "esbuild": "^0.14.8",
+    "eslint": "^8.5.0",
+    "shx": "^0.3.3",
+    "typescript": "^4.5.4"
+  }
+}

@@ -133,6 +133,8 @@ export const createServer = (
       listeningListener = l_arg4;
     }
 
+    emitter.on('listening', listeningListener);
+
     const parsedIP = isIP(listenOptions.host);
     const isLocal = parsedIP === 0 && listenOptions.host.startsWith('local');
 
@@ -161,7 +163,7 @@ export const createServer = (
         internalSocket = listening;
         server.listening = Boolean(listening);
 
-        listeningListener();
+        emitter.emit('listening');
       } else {
         const error = new Error(`listen EADDRINUSE address: already in use ${listenOptions.host}:${listenOptions.port}`);
 
@@ -188,6 +190,8 @@ export const createServer = (
     if (typeof fn === 'function') {
       fn(error);
     }
+
+    emitter.emit('close', error);
 
     return server;
   };

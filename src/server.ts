@@ -14,6 +14,7 @@ import { EADDRINUSE } from 'constants';
 import { isIP } from 'net';
 
 import { UNDEFINED, emitNotImplemented, lazy, noop, notImplemented } from './utils.js';
+import { compat } from './compat.js';
 
 import { request } from './request.js';
 import { response } from './response.js';
@@ -23,8 +24,9 @@ export const createServer = (
   s_arg1?: RequestListener | ServerOptions | undefined,
   s_arg2?: RequestListener | undefined
 ): Server => {
-  /* eslint-disable new-cap */
+  compat();
 
+  // eslint-disable-next-line new-cap
   const internal = uws.App();
   let internalSocket: any = null;
 

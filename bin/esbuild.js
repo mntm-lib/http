@@ -21,7 +21,10 @@ const options = {
     'events',
     'constants',
     'timers',
-    'process'
+    'process',
+    'os',
+    'cluster',
+    'worker_threads'
   ],
   keepNames: true,
   minify: true,

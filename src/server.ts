@@ -12,6 +12,7 @@ import { default as uws } from 'uws';
 import { EventEmitter } from 'events';
 import { EADDRINUSE } from 'constants';
 import { isIP } from 'net';
+import { setImmediate } from 'timers';
 
 import { UNDEFINED, emitNotImplemented, lazy, noop, notImplemented } from './utils.js';
 import { compat } from './compat.js';
@@ -146,11 +147,13 @@ export const createServer = (
     };
 
     internal.any('/*', (res, req) => {
-      const createSocket = lazy(() => socket(server, res));
-      const createRequest = request(createSocket, req, res);
-      const createResponse = response(createSocket, createRequest, res);
+      setImmediate(() => {
+        const createSocket = lazy(() => socket(server, res));
+        const createRequest = request(createSocket, req, res);
+        const createResponse = response(createSocket, createRequest, res);
 
-      emitter.emit('request', createRequest, createResponse);
+        emitter.emit('request', createRequest, createResponse);
+      });
     });
 
     internal.listen(listenOptions.host, listenOptions.port, (listening) => {

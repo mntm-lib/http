@@ -13,7 +13,7 @@ import { EventEmitter } from 'events';
 import { EADDRINUSE } from 'constants';
 import { isIP } from 'net';
 
-import { emitNotImplemented, lazy, noop, notImplemented } from './utils.js';
+import { UNDEFINED, emitNotImplemented, lazy, noop, notImplemented } from './utils.js';
 
 import { request } from './request.js';
 import { response } from './response.js';
@@ -26,6 +26,7 @@ export const createServer = (
   /* eslint-disable new-cap */
 
   const internal = uws.App();
+  let internalSocket: any = null;
 
   const emitter = new EventEmitter({
     captureRejections: true
@@ -152,6 +153,7 @@ export const createServer = (
 
     internal.listen(listenOptions.host, listenOptions.port, (listening) => {
       if (listening) {
+        internalSocket = listening;
         server.listening = Boolean(listening);
 
         listeningListener();
@@ -169,8 +171,26 @@ export const createServer = (
     return server;
   };
 
-  // TODO: inline?
-  server.listen = listen;
+  const close = (fn?: (ex?: Error) => void) => {
+    let error: any = UNDEFINED;
+
+    try {
+      uws.us_listen_socket_close(internalSocket);
+    } catch (ex: unknown) {
+      error = ex;
+    }
+
+    if (typeof fn === 'function') {
+      fn(error);
+    }
+
+    return server;
+  };
+
+  Object.assign(server, {
+    listen,
+    close
+  });
 
   Object.defineProperty(server, 'maxHeadersCount', {
     enumerable: true,

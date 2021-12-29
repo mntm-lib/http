@@ -27,7 +27,7 @@ const options = {
     'worker_threads'
   ],
   keepNames: true,
-  minify: true,
+  minify: false,
 };
 
 /**

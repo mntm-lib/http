@@ -10,6 +10,7 @@ import { UNDEFINED, notImplemented } from './utils.js';
 
 const CHUNKED = 16384; // 16kB
 const SET_COOKIE = 'set-cookie';
+const CONTENT_LENGTH = 'content-length';
 
 export const response = (socket: () => Socket, request: IncomingMessage, res: HttpResponse): ServerResponse => {
   let length = 0;
@@ -244,7 +245,15 @@ export const response = (socket: () => Socket, request: IncomingMessage, res: Ht
     instance.headersSent = true;
 
     for (const name in headers) {
-      res.writeHeader(name, headers[name]);
+      // Content-Length is written internally
+      if (name !== CONTENT_LENGTH) {
+        res.writeHeader(name, headers[name]);
+      }
+    }
+
+    if (cookies.length === 0) {
+      // Fast-path empty cookies
+      return;
     }
 
     for (const cookie of cookies) {
@@ -300,6 +309,12 @@ export const response = (socket: () => Socket, request: IncomingMessage, res: Ht
     hasHeader,
     removeHeader,
     flushHeaders
+  });
+
+  // Deprecated
+  Object.defineProperty(instance, 'finished', {
+    enumerable: true,
+    get: () => instance.writableEnded
   });
 
   instance.once('error', () => {

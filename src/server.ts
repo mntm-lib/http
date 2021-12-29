@@ -12,7 +12,6 @@ import { default as uws } from 'uws';
 import { EventEmitter } from 'events';
 import { EADDRINUSE } from 'constants';
 import { isIP } from 'net';
-import { setImmediate } from 'timers';
 
 import { UNDEFINED, emitNotImplemented, lazy, noop, notImplemented } from './utils.js';
 import { compat } from './compat.js';
@@ -27,12 +26,20 @@ export const createServer = (
 ): Server => {
   compat();
 
-  // eslint-disable-next-line new-cap
-  const internal = uws.App();
+  let server: Server;
+
+  let serverAddress: AddressInfo | null = null;
   let internalSocket: any = null;
 
-  const emitter = new EventEmitter({
-    captureRejections: true
+  // eslint-disable-next-line new-cap
+  const internal = uws.App();
+
+  const emitter = new EventEmitter();
+
+  server = emitter as unknown as Server;
+  server = Object.assign(server, {
+    listening: false,
+    address: () => serverAddress
   });
 
   let requestListener = noop;
@@ -50,14 +57,8 @@ export const createServer = (
   }
 
   if (requestListener !== noop) {
-    emitter.on('request', requestListener);
+    server.on('request', requestListener);
   }
-
-  let serverAddress: AddressInfo | null = null;
-  const server = {
-    listening: false,
-    address: () => serverAddress
-  } as unknown as Server;
 
   const listen = (
     l_arg1?: any,
@@ -133,13 +134,15 @@ export const createServer = (
       listeningListener = l_arg4;
     }
 
-    emitter.on('listening', listeningListener);
+    if (listeningListener !== noop) {
+      server.on('listening', listeningListener);
+    }
 
     const parsedIP = isIP(listenOptions.host);
-    const isLocal = parsedIP === 0 && listenOptions.host.startsWith('local');
+    const isLocal = parsedIP === 0 && listenOptions.host === 'localhost';
 
     if (isLocal) {
-      listenOptions.host = '0.0.0.0';
+      listenOptions.host = '127.0.0.1';
     }
 
     serverAddress = {
@@ -148,14 +151,12 @@ export const createServer = (
       family: parsedIP === 6 ? 'IPv6' : 'IPv4'
     };
 
-    internal.any('/*', (res, req) => {
-      setImmediate(() => {
-        const createSocket = lazy(() => socket(server, res));
-        const createRequest = request(createSocket, req, res);
-        const createResponse = response(createSocket, createRequest, res);
+    internal.any('/*', async (res, req) => {
+      const createSocket = lazy(() => socket(server, res));
+      const createRequest = request(createSocket, req, res);
+      const createResponse = response(createSocket, createRequest, res);
 
-        emitter.emit('request', createRequest, createResponse);
-      });
+      server.emit('request', createRequest, createResponse);
     });
 
     internal.listen(listenOptions.host, listenOptions.port, (listening) => {
@@ -163,7 +164,7 @@ export const createServer = (
         internalSocket = listening;
         server.listening = Boolean(listening);
 
-        emitter.emit('listening');
+        server.emit('listening');
       } else {
         const error = new Error(`listen EADDRINUSE address: already in use ${listenOptions.host}:${listenOptions.port}`);
 
@@ -191,7 +192,7 @@ export const createServer = (
       fn(error);
     }
 
-    emitter.emit('close', error);
+    server.emit('close', error);
 
     return server;
   };
@@ -224,8 +225,6 @@ export const createServer = (
     get: () => 0,
     set: notImplemented('server#connections')
   });
-
-  Object.assign(emitter, server);
 
   return server;
 };

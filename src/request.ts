@@ -4,9 +4,22 @@ import type { Socket } from 'net';
 
 import { Readable } from 'stream';
 
-import { UNDEFINED, lazy, notImplemented } from './utils.js';
+import { UNDEFINED, notImplemented } from './utils.js';
 
 export const request = (socket: () => Socket, req: HttpRequest, res: HttpResponse): IncomingMessage => {
+  const method = req.getMethod().toUpperCase();
+  const url = req.getUrl();
+
+  const rawHeaders: string[] = [];
+  const headers: Record<string, string> = {};
+
+  req.forEach((key, value) => {
+    key = key.toLowerCase();
+
+    rawHeaders.push(key, value);
+    headers[key] = value;
+  });
+
   let instance: IncomingMessage;
 
   const readable = new Readable({
@@ -26,46 +39,14 @@ export const request = (socket: () => Socket, req: HttpRequest, res: HttpRespons
     trailers: {},
     rawTrailers: [],
 
-    // Should not be lazy as it is usually rewritten
-    url: req.getUrl(),
+    url,
+    method,
+
+    headers,
+    rawHeaders,
 
     socket,
     connection: socket
-  });
-
-  const getHeaders = lazy(() => {
-    const rawHeaders: string[] = [];
-    const headers: Record<string, string> = {};
-
-    req.forEach((key, value) => {
-      key = key.toLowerCase();
-
-      rawHeaders.push(key, value);
-      headers[key] = value;
-    });
-
-    return {
-      rawHeaders,
-      headers
-    } as const;
-  });
-
-  Object.defineProperty(instance, 'method', {
-    enumerable: true,
-    get: lazy(() => req.getMethod().toUpperCase()),
-    set: notImplemented('request#method')
-  });
-
-  Object.defineProperty(instance, 'headers', {
-    enumerable: true,
-    get: () => getHeaders().headers,
-    set: notImplemented('request#headers')
-  });
-
-  Object.defineProperty(instance, 'rawHeaders', {
-    enumerable: true,
-    get: () => getHeaders().rawHeaders,
-    set: notImplemented('request#rawHeaders')
   });
 
   Object.defineProperty(instance, 'setTimeout', {

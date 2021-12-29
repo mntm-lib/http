@@ -14,10 +14,10 @@ There are many frameworks that use uWebSockets.js, including:
 This package implements native node.js `createServer`, which can be integrated with any framework, for example:
 
 ```js
-import Fastify from 'fastify';
+import fastify from 'fastify';
 import http from '@mntm/http';
 
-const fastify = Fastify({
+const app = fastify({
   serverFactory: (handler, opts) => http.createServer(handler)
 });
 ```
@@ -25,10 +25,6 @@ const fastify = Fastify({
 ## Known limitations
 
 This package doesn't rely on `IncomingMessage` and `ServerResponse` because request and response APIs are built from scratch. They cannot be replaced with an essentially incompatible foreign prototype. This means that [Express](https://github.com/expressjs/express/blob/master/lib/middleware/init.js#L35-L36) has poor compatibility.
-
-## Notes
-
-The HTTP handler function is prioritized using `setImmediate`. If you are using [restana](https://github.com/BackendStack21/restana), you should set `prioRequestsProcessing` to `false` because the handler is already prioritized.
 
 ## Installation
 

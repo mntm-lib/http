@@ -2,6 +2,16 @@
 
 Speed up any node.js server. Implements [http.createServer](https://nodejs.org/api/http.html#httpcreateserveroptions-requestlistener) around [uWebSockets.js](https://github.com/uNetworking/uWebSockets.js).
 
+## Benchmark
+
+|name             |req/sec  |
+|-----------------|---------|
+|low-http-server* |54272    |
+|@mntm/http       |49882    |
+|native           |39458    |
+
+> low-http-server has a lack of implementation, but we are comparing with it because it too uses uWebsockets.js
+
 ## Introduction
 
 There are many frameworks that use uWebSockets.js, including:

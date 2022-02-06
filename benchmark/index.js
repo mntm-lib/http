@@ -78,5 +78,7 @@ const low = promisify((cb) => {
     console.log(result.map((out) => out.stdout).join('\r\n'));
 
     await close();
+
+    global.gc();
   }
 })();

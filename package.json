@@ -37,7 +37,7 @@
     "build:bundle": "node bin/esbuild.js",
     "build": "yarn run build:clear && yarn run build:types && yarn run build:bundle",
     "test": "yarn node --experimental-vm-modules node_modules/.bin/jest --config=jest.config.js",
-    "benchmark": "yarn node benchmark/index.js"
+    "benchmark": "yarn node --expose-gc benchmark/index.js"
   },
   "dependencies": {
     "uws": "github:uNetworking/uWebSockets.js#v20.6.0"

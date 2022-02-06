@@ -25,9 +25,7 @@ const options = {
     'os',
     'cluster',
     'worker_threads'
-  ],
-  keepNames: true,
-  minify: true,
+  ]
 };
 
 /**

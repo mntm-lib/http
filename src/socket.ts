@@ -1,60 +1,46 @@
-import type { HttpResponse } from 'uws';
-import type { Server } from 'http';
 import type { AddressInfo, Socket } from 'net';
+import type { HttpResponse } from 'uws';
 
-import { clearTimeout, setTimeout } from 'timers';
+import { Buffer } from 'buffer';
+import { setTimeout } from 'timers';
 
-import { lazy } from './utils';
+type PartialSocket = Partial<Socket>;
 
-export const socket = (server: Server, res: HttpResponse): Socket => {
-  const localAddress = server.address() as AddressInfo;
+export class FakeSocket implements PartialSocket {
+  public address: () => AddressInfo;
+  public localAddress: string;
+  public localPort: number;
 
-  const lazyAddress = lazy(() => {
+  public remotePort = 80;
+
+  constructor(address: AddressInfo) {
+    this.address = () => address;
+    this.localAddress = address.address;
+    this.localPort = address.port;
+  }
+
+  public apply(res: HttpResponse) {
     const address = res.getRemoteAddress();
 
-    return {
-      address: Buffer.from(address).toString('utf8'),
-      family: address.byteLength === 16 ? 'IPv4' : 'IPv6'
-    };
-  });
+    return Object.assign({
+      remoteAddress: Buffer.from(address).toString('utf8'),
+      family: address.byteLength === 16 ? 'IPv4' : 'IPv6',
 
-  const instance = {
-    address: () => localAddress,
+      setTimeout(timeout: number, cb?: () => void) {
+        const timer = setTimeout(() => {
+          res.close();
 
-    remotePort: 0,
+          if (typeof cb === 'function') {
+            cb();
+          }
+        }, timeout);
 
-    localAddress: localAddress.address,
-    localPort: localAddress.port
-  } as unknown as Socket;
+        res.onAborted(() => {
+          clearTimeout(timer);
+        });
 
-  Object.defineProperty(instance, 'remoteAddress', {
-    enumerable: true,
-    get: () => lazyAddress().address
-  });
-
-  Object.defineProperty(instance, 'remoteFamily', {
-    enumerable: true,
-    get: () => lazyAddress().family
-  });
-
-  Object.defineProperty(instance, 'setTimeout', {
-    enumerable: true,
-    value(timeout: number, cb?: () => void): Socket {
-      const timer = setTimeout(() => {
-        res.close();
-
-        if (typeof cb === 'function') {
-          cb();
-        }
-      }, timeout);
-
-      res.onAborted(() => {
-        clearTimeout(timer);
-      });
-
-      return instance;
-    }
-  });
-
-  return instance as unknown as Socket;
-};
+        return this;
+      }
+    }, this);
+  }
+}

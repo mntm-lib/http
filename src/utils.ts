@@ -8,8 +8,14 @@ export const emitNotImplemented = (method: string): void => {
   });
 };
 
-export const notImplemented = (method: string): AnyFunction => {
-  return () => emitNotImplemented(method);
+export const throwNotImplemented = (method: string): never => {
+  const error = new Error(method);
+
+  Object.defineProperty(error, 'code', {
+    value: 'NOT_IMPLEMENTED'
+  });
+
+  throw error;
 };
 
 export const lazy = <T>(fn: () => T) => {
@@ -29,4 +35,8 @@ export const UNDEFINED = undefined;
 
 export const noop: AnyFunction = () => {
   // Noop
+};
+
+export const hasBody = (method: string) => {
+  return method !== 'HEAD' && method !== 'GET' && method !== 'OPTIONS';
 };

@@ -1,13 +1,14 @@
 {
   "extends": "./tsconfig.base.json",
   "include": [
+    "benchmark/**/*",
+    "bin/**/*",
     "src/**/*",
     "tests/*.js",
     "jest.config.js"
   ],
   "exclude": [
     "lib",
-    "bin",
     "node_modules"
   ]
 }

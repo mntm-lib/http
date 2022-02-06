@@ -3,69 +3,78 @@ import type {
   Server,
   ServerOptions
 } from 'http';
+import type { AddressInfo } from 'net';
+import type { TemplatedApp, us_listen_socket } from 'uws';
 
-import type {
-  AddressInfo
-} from 'net';
+import { EventEmitter } from 'events';
+import { isIP } from 'net';
+import { EADDRINUSE } from 'constants';
 
 import { default as uws } from 'uws';
-import { EventEmitter } from 'events';
-import { EADDRINUSE } from 'constants';
-import { isIP } from 'net';
 
-import { UNDEFINED, emitNotImplemented, lazy, noop, notImplemented } from './utils.js';
+import { UNDEFINED, emitNotImplemented, noop, throwNotImplemented } from './utils';
+
 import { compat } from './compat.js';
+import { FakeSocket } from './socket.js';
+import { CompatIncomingMessage } from './request.js';
+import { CompatServerResponse } from './response.js';
 
-import { request } from './request.js';
-import { response } from './response.js';
-import { socket } from './socket.js';
+const StaticEmitterOptions = {
+  captureRejections: true
+} as const;
 
-export const createServer = (
-  s_arg1?: RequestListener | ServerOptions | undefined,
-  s_arg2?: RequestListener | undefined
-): Server => {
-  compat();
+export class CompatServer extends EventEmitter implements Server {
+  public maxHeadersCount = 0;
+  public maxRequestsPerSocket = 0;
+  public maxConnections = 0;
+  public connections = 0;
 
-  let server: Server;
+  public listening = false;
 
-  let serverAddress: AddressInfo | null = null;
-  let internalSocket: any = null;
+  public setTimeout = noop;
+  public timeout = 0;
+  public headersTimeout = 0;
+  public keepAliveTimeout = 0;
+  public requestTimeout = 0;
 
-  // eslint-disable-next-line new-cap
-  const internal = uws.App();
+  private __socket!: FakeSocket;
+  private __serverAddress: AddressInfo | null = null;
+  private __serverSocket: us_listen_socket | null = null;
+  private readonly __server: TemplatedApp;
 
-  const emitter = new EventEmitter();
+  constructor(
+    s_arg1?: RequestListener | ServerOptions | undefined,
+    s_arg2?: RequestListener | undefined
+  ) {
+    super(StaticEmitterOptions);
 
-  server = emitter as unknown as Server;
-  server = Object.assign(server, {
-    listening: false,
-    address: () => serverAddress
-  });
+    let requestListener = noop;
 
-  let requestListener = noop;
+    if (typeof s_arg1 === 'object' && s_arg1 !== null) {
+      throwNotImplemented('createServer#options');
+    }
 
-  if (typeof s_arg1 === 'object' && s_arg1 !== null) {
-    emitNotImplemented('createServer#options');
+    if (typeof s_arg1 === 'function') {
+      requestListener = s_arg1;
+    }
+
+    if (typeof s_arg2 === 'function') {
+      requestListener = s_arg2;
+    }
+
+    if (requestListener !== noop) {
+      this.on('request', requestListener);
+    }
+
+    this.__server = uws.App();
   }
 
-  if (typeof s_arg1 === 'function') {
-    requestListener = s_arg1;
-  }
-
-  if (typeof s_arg2 === 'function') {
-    requestListener = s_arg2;
-  }
-
-  if (requestListener !== noop) {
-    server.on('request', requestListener);
-  }
-
-  const listen = (
+  public listen(
     l_arg1?: any,
     l_arg2?: string | number | (() => void) | undefined,
     l_arg3?: number | (() => void) | undefined,
     l_arg4?: (() => void) | undefined
-  ) => {
+  ) {
     const listenOptions = {
       host: '0.0.0.0',
       port: 80
@@ -75,7 +84,7 @@ export const createServer = (
 
     if (typeof l_arg1 === 'string') {
       if (Number.isNaN(l_arg1)) {
-        emitNotImplemented('listen#path');
+        throwNotImplemented('listen#path');
       } else {
         listenOptions.port = Number(l_arg1);
       }
@@ -135,7 +144,7 @@ export const createServer = (
     }
 
     if (listeningListener !== noop) {
-      server.on('listening', listeningListener);
+      this.on('listening', listeningListener);
     }
 
     const parsedIP = isIP(listenOptions.host);
@@ -145,26 +154,28 @@ export const createServer = (
       listenOptions.host = '127.0.0.1';
     }
 
-    serverAddress = {
+    this.__serverAddress = {
       address: listenOptions.host,
       port: listenOptions.port,
       family: parsedIP === 6 ? 'IPv6' : 'IPv4'
     };
 
-    internal.any('/*', async (res, req) => {
-      const createSocket = lazy(() => socket(server, res));
-      const createRequest = request(createSocket, req, res);
-      const createResponse = response(createSocket, createRequest, res);
+    this.__socket = new FakeSocket(this.__serverAddress);
 
-      server.emit('request', createRequest, createResponse);
+    this.__server.any('/*', async (res, req) => {
+      const createSocket = this.__socket.apply(res);
+      const createRequest = new CompatIncomingMessage(createSocket, req, res);
+      const createResponse = new CompatServerResponse(createSocket, createRequest, res);
+
+      this.emit('request', createRequest, createResponse);
     });
 
-    internal.listen(listenOptions.host, listenOptions.port, (listening) => {
+    this.__server.listen(listenOptions.host, listenOptions.port, (listening) => {
       if (listening) {
-        internalSocket = listening;
-        server.listening = Boolean(listening);
+        this.__serverSocket = listening;
+        this.listening = Boolean(listening);
 
-        server.emit('listening');
+        this.emit('listening');
       } else {
         const error = new Error(`listen EADDRINUSE address: already in use ${listenOptions.host}:${listenOptions.port}`);
 
@@ -176,14 +187,24 @@ export const createServer = (
       }
     });
 
-    return server;
-  };
+    return this;
+  }
 
-  const close = (fn?: (ex?: Error) => void) => {
+  close(fn?: (ex?: Error) => void) {
     let error: any = UNDEFINED;
 
     try {
-      uws.us_listen_socket_close(internalSocket);
+      if (this.__serverSocket) {
+        uws.us_listen_socket_close(this.__serverSocket);
+      } else {
+        if (typeof fn === 'function') {
+          fn(error);
+        }
+
+        this.emit('close', error);
+
+        return this;
+      }
     } catch (ex: unknown) {
       error = ex;
     }
@@ -192,40 +213,33 @@ export const createServer = (
       fn(error);
     }
 
-    server.emit('close', error);
+    this.emit('close', error);
 
-    return server;
-  };
+    return this;
+  }
 
-  Object.assign(server, {
-    listen,
-    close
-  });
+  public address() {
+    return this.__serverAddress;
+  }
 
-  Object.defineProperty(server, 'maxHeadersCount', {
-    enumerable: true,
-    get: () => 0,
-    set: notImplemented('server#maxHeadersCount')
-  });
+  public getConnections(cb: (error: Error | null, count: number) => void) {
+    return cb(null, 0);
+  }
 
-  Object.defineProperty(server, 'maxRequestsPerSocket', {
-    enumerable: true,
-    get: () => 0,
-    set: notImplemented('server#maxRequestsPerSocket')
-  });
+  public ref() {
+    return this;
+  }
 
-  Object.defineProperty(server, 'maxConnections', {
-    enumerable: true,
-    get: () => 0,
-    set: notImplemented('server#maxConnections')
-  });
+  public unref() {
+    return this;
+  }
+}
 
-  Object.defineProperty(server, 'connections', {
-    enumerable: true,
-    get: () => 0,
-    set: notImplemented('server#connections')
-  });
+export const createServer = (
+  s_arg1?: RequestListener | ServerOptions | undefined,
+  s_arg2?: RequestListener | undefined
+) => {
+  compat();
 
-  return server;
+  return new CompatServer(s_arg1, s_arg2);
 };
-

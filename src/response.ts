@@ -1,148 +1,259 @@
 import type { IncomingMessage, OutgoingHttpHeader, OutgoingHttpHeaders, ServerResponse } from 'http';
-import type { Socket } from 'net';
 import type { HttpResponse } from 'uws';
+import type { Socket } from 'net';
+
+import type { CompatIncomingMessage } from './request.js';
+import type { FakeSocket } from './socket.js';
 
 import { Writable } from 'stream';
 import { Buffer } from 'buffer';
 import { STATUS_CODES } from 'http';
 
-import { UNDEFINED, notImplemented } from './utils.js';
+import { UNDEFINED, noop } from './utils.js';
+
+type BufferEncoding = 'ascii' | 'utf8' | 'utf-8' | 'utf16le' | 'ucs2' | 'ucs-2' | 'base64' | 'base64url' | 'latin1' | 'binary' | 'hex';
 
 const CHUNKED = 16384; // 16kB
 const SET_COOKIE = 'set-cookie';
 const CONTENT_LENGTH = 'content-length';
 
-export const response = (socket: () => Socket, request: IncomingMessage, res: HttpResponse): ServerResponse => {
-  let length = 0;
-  let hasBody = true;
-  const body: Buffer[] = [];
+export class CompatServerResponse extends Writable implements ServerResponse {
+  private __hasBody = true;
+  private __bodyLength = 0;
+  private readonly __body: Buffer[] = [];
 
-  let instance: ServerResponse;
+  private __cookies: string[] = [];
+  private __headers: Record<string, string> = {};
 
-  const writable = new Writable({
-    write(chunk, encoding, callback) {
-      const buffer = Buffer.from(chunk, encoding);
+  private readonly __res: HttpResponse;
 
-      length += buffer.byteLength;
-      body.push(buffer);
+  public get finished() {
+    return this.writableEnded;
+  }
 
-      return callback();
-    },
-    writev(chunks, callback) {
-      chunks.forEach((chunk) => {
-        const buffer = Buffer.from(chunk.chunk, chunk.encoding);
+  public headersSent = false;
 
-        length += buffer.byteLength;
-        body.push(buffer);
-      });
+  public statusCode = 404;
+  public statusMessage = 'Not found';
 
-      return callback();
-    },
-    final(callback) {
-      if (!instance.headersSent) {
-        instance.flushHeaders();
-      }
+  public chunkedEncoding = false;
+  public shouldKeepAlive = false;
+  public useChunkedEncodingByDefault = false;
+  public sendDate = false;
 
-      if (!hasBody || length === 0) {
-        res.end();
+  public socket: Socket;
+  public connection: Socket;
 
-        return callback();
-      }
+  public req: IncomingMessage;
 
-      const payload = body.length === 1 ? body[0] : Buffer.concat(body, length);
+  _write(chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    const buffer = Buffer.from(chunk, encoding);
 
-      if (length < CHUNKED) {
-        res.end(payload);
+    this.__bodyLength += buffer.byteLength;
+    this.__body.push(buffer);
 
-        return callback();
-      }
+    return callback();
+  }
 
-      let ok = false;
-      let done = false;
+  _writev(chunks: any[], callback: (error?: Error | null) => void) {
+    chunks.forEach((chunk) => {
+      const buffer = Buffer.from(chunk.chunk, chunk.encoding);
 
-      [ok, done] = res.tryEnd(payload, length);
+      this.__bodyLength += buffer.byteLength;
+      this.__body.push(buffer);
+    });
 
-      if (ok || done) {
-        return callback();
-      }
+    return callback();
+  }
 
-      res.onWritable((offset) => {
-        [ok, done] = res.tryEnd(payload.slice(offset, length), length);
-
-        if (done) {
-          // eslint-disable-next-line callback-return
-          callback();
-        }
-
-        return ok || done;
-      });
+  _final(callback: (error?: Error | null) => void) {
+    if (!this.headersSent) {
+      this.flushHeaders();
     }
-  });
 
-  instance = writable as ServerResponse;
+    if (!this.__hasBody || this.__bodyLength === 0) {
+      this.__res.end();
 
-  // Use array syntax only for cookies
-  let cookies: string[] = [];
-  const headers: Record<string, string> = {};
+      return callback();
+    }
 
-  const setHeader = (
+    const payload = this.__body.length === 1 ?
+      this.__body[0] :
+      Buffer.concat(this.__body, this.__bodyLength);
+
+    if (this.__bodyLength < CHUNKED) {
+      this.__res.end(payload);
+
+      return callback();
+    }
+
+    let ok = false;
+    let done = false;
+
+    [ok, done] = this.__res.tryEnd(payload, this.__bodyLength);
+
+    if (ok || done) {
+      return callback();
+    }
+
+    this.__res.onWritable((offset) => {
+      [ok, done] = this.__res.tryEnd(payload.slice(offset, this.__bodyLength), this.__bodyLength);
+
+      if (done) {
+        // eslint-disable-next-line callback-return
+        callback();
+      }
+
+      return ok || done;
+    });
+  }
+
+  constructor(socket: FakeSocket, req: CompatIncomingMessage, res: HttpResponse) {
+    super();
+
+    this.socket = socket as unknown as Socket;
+    this.connection = socket as unknown as Socket;
+
+    this.req = req as unknown as IncomingMessage;
+    this.__res = res;
+
+    this.once('error', res.close);
+    res.onAborted(this.destroy.bind(this));
+  }
+
+  public setHeader(
     name: string,
     value: number | string | readonly string[]
-  ) => {
-    if (instance.headersSent) {
-      throw new Error('Cannot set headers after they are sent to the client');
-    }
-
-    name = String(name).toLowerCase();
+  ) {
+    name = name.toLowerCase();
 
     if (typeof value === 'object' && Array.isArray(value)) {
       // Fast-path for set headers
       if (value.length === 0) {
-        return instance;
+        return this;
       }
 
       if (name === SET_COOKIE) {
-        cookies.push.apply(cookies, value.map(String));
+        this.__cookies.push.apply(this.__cookies, value);
       } else {
-        headers[name] = String(value[value.length - 1]);
+        this.__headers[name] = value[value.length - 1].toString();
       }
     } else if (name === SET_COOKIE) {
-      cookies.push(String(value));
+      this.__cookies.push(value.toString());
     } else {
-      headers[name] = String(value);
+      this.__headers[name] = value.toString();
     }
 
-    return instance;
-  };
+    return this;
+  }
 
-  const writeHead = (
+  public hasHeader(name: string) {
+    name = name.toLowerCase();
+
+    if (name === SET_COOKIE) {
+      return this.__cookies.length > 0;
+    }
+
+    return name in this.__headers;
+  }
+
+  public getHeader(name: string) {
+    name = name.toLowerCase();
+
+    if (name === SET_COOKIE) {
+      if (this.__cookies.length > 0) {
+        return this.__cookies;
+      }
+
+      return UNDEFINED;
+    }
+
+    return this.__headers[name];
+  }
+
+  public getHeaders() {
+    const record: Record<string, string | string[]> = Object.assign({}, this.__headers);
+
+    if (this.__cookies.length > 0) {
+      record[SET_COOKIE] = this.__cookies;
+    }
+
+    return record;
+  }
+
+  public getHeaderNames() {
+    const keys = Object.keys(this.__headers);
+
+    if (this.__cookies.length > 0) {
+      keys.push(SET_COOKIE);
+    }
+
+    return keys;
+  }
+
+  public removeHeader(name: string) {
+    if (this.headersSent) {
+      throw new Error('Cannot remove headers after they are sent to the client');
+    }
+
+    name = name.toLowerCase();
+
+    if (name === SET_COOKIE) {
+      this.__cookies = [];
+    } else if (name in this.__headers) {
+      // Pre-check
+      delete this.__headers[name];
+    }
+  }
+
+  public flushHeaders() {
+    this.headersSent = true;
+
+    for (const name in this.__headers) {
+      // Content-Length is written internally
+      if (name !== CONTENT_LENGTH) {
+        this.__res.writeHeader(name, this.__headers[name]);
+      }
+    }
+
+    if (this.__cookies.length === 0) {
+      // Fast-path empty cookies
+      return;
+    }
+
+    for (const cookie of this.__cookies) {
+      this.__res.writeHeader(SET_COOKIE, cookie);
+    }
+  }
+
+  public writeHead(
     w_arg1: number,
     w_arg2?: string | OutgoingHttpHeaders | OutgoingHttpHeader[],
     w_arg3?: OutgoingHttpHeaders | OutgoingHttpHeader[]
-  ) => {
+  ) {
     const rawStatusCode = Math.trunc(w_arg1);
 
     if (rawStatusCode < 100 || rawStatusCode > 999) {
       throw new RangeError(`Invalid status code: ${rawStatusCode}`);
     }
 
-    instance.statusCode = rawStatusCode;
+    this.statusCode = rawStatusCode;
 
     if (
-      instance.statusCode === 204 ||
-      instance.statusCode === 304 ||
-      (instance.statusCode >= 100 && instance.statusCode <= 199)
+      this.statusCode === 204 ||
+      this.statusCode === 304 ||
+      (this.statusCode >= 100 && this.statusCode <= 199)
     ) {
-      hasBody = false;
+      this.__hasBody = false;
     }
 
     if (typeof w_arg2 === 'string') {
-      instance.statusMessage = w_arg2;
-    } else if (instance.statusCode in STATUS_CODES) {
+      this.statusMessage = w_arg2;
+    } else if (this.statusCode in STATUS_CODES) {
       // @ts-expect-error false-positive
-      instance.statusMessage = STATUS_CODES[instance.statusCode];
+      this.statusMessage = STATUS_CODES[this.statusCode];
     } else {
-      instance.statusMessage = 'Unknown';
+      this.statusMessage = 'Unknown';
     }
 
     let rawHeaders: OutgoingHttpHeaders | OutgoingHttpHeader[] | null = null;
@@ -162,168 +273,40 @@ export const response = (socket: () => Socket, request: IncomingMessage, res: Ht
         }
 
         for (let iter = 0; iter < rawHeaders.length; iter += 2) {
-          setHeader(String(rawHeaders[iter]), rawHeaders[iter + 1]);
+          this.setHeader(rawHeaders[iter].toString(), rawHeaders[iter + 1]);
         }
       } else {
         for (const name in rawHeaders) {
-          setHeader(String(name), rawHeaders[name]!);
+          this.setHeader(name.toString(), rawHeaders[name]!);
         }
       }
     }
-  };
 
-  const hasHeader = (
-    name: string
-  ) => {
-    name = String(name).toLowerCase();
+    return this;
+  }
 
-    if (name === SET_COOKIE) {
-      return cookies.length > 0;
-    }
+  public writeHeader = this.writeHead;
 
-    return name in headers;
-  };
+  public assignSocket = noop;
+  public detachSocket = noop;
 
-  const getHeader = (
-    name: string
-  ) => {
-    name = String(name).toLowerCase();
+  public addTrailers = noop;
 
-    if (name === SET_COOKIE) {
-      if (cookies.length > 0) {
-        return cookies;
-      }
-
-      return UNDEFINED;
-    }
-
-    if (name in headers) {
-      return headers[name];
-    }
-
-    return UNDEFINED;
-  };
-
-  const getHeaders = () => {
-    const record: Record<string, string | string[]> = Object.assign({}, headers);
-
-    if (cookies.length > 0) {
-      record[SET_COOKIE] = cookies;
-    }
-
-    return record;
-  };
-
-  const getHeaderNames = () => {
-    const keys = Object.keys(headers);
-
-    if (cookies.length > 0) {
-      keys.push(SET_COOKIE);
-    }
-
-    return keys;
-  };
-
-  const removeHeader = (
-    name: string
-  ) => {
-    if (instance.headersSent) {
-      throw new Error('Cannot remove headers after they are sent to the client');
-    }
-
-    name = String(name).toLowerCase();
-
-    if (name === SET_COOKIE) {
-      cookies = [];
-    } else if (name in headers) {
-      delete headers[name];
-    }
-  };
-
-  const flushHeaders = () => {
-    // @ts-expect-error false-positive
-    instance.headersSent = true;
-
-    for (const name in headers) {
-      // Content-Length is written internally
-      if (name !== CONTENT_LENGTH) {
-        res.writeHeader(name, headers[name]);
-      }
-    }
-
-    if (cookies.length === 0) {
-      // Fast-path empty cookies
-      return;
-    }
-
-    for (const cookie of cookies) {
-      res.writeHeader(SET_COOKIE, cookie);
-    }
-  };
-
-  const writeContinue = (cb?: () => void) => {
-    res.writeStatus('100 Continue');
+  public writeContinue(cb?: () => void) {
+    this.__res.writeStatus('100 Continue');
 
     if (typeof cb === 'function') {
       cb();
     }
-  };
+  }
 
-  const writeProcessing = () => {
-    res.writeStatus('102 Processing');
-  };
+  public writeProcessing() {
+    this.__res.writeStatus('102 Processing');
+  }
 
-  Object.defineProperty(instance, 'setTimeout', {
-    enumerable: true,
-    get: () => socket().setTimeout
-  });
+  public setTimeout(msecs: number, callback?: () => void) {
+    this.socket.setTimeout(msecs, callback);
 
-  instance = Object.assign(instance, {
-    statusCode: 404,
-    statusMessage: 'Not found',
-
-    chunkedEncoding: false,
-    shouldKeepAlive: false,
-    useChunkedEncodingByDefault: false,
-    sendDate: false,
-
-    headersSent: false,
-
-    req: request,
-
-    socket,
-    connection: socket,
-
-    assignSocket: notImplemented('response#assignSocket'),
-    detachSocket: notImplemented('response#detachSocket'),
-    addTrailers: notImplemented('response#addTrailers'),
-
-    writeContinue,
-    writeProcessing,
-    writeHead,
-    writeHeader: writeHead,
-    setHeader,
-    getHeader,
-    getHeaders,
-    getHeaderNames,
-    hasHeader,
-    removeHeader,
-    flushHeaders
-  });
-
-  // Deprecated
-  Object.defineProperty(instance, 'finished', {
-    enumerable: true,
-    get: () => instance.writableEnded
-  });
-
-  instance.once('error', () => {
-    res.close();
-  });
-
-  res.onAborted(() => {
-    instance.destroy();
-  });
-
-  return instance;
-};
+    return this;
+  }
+}
